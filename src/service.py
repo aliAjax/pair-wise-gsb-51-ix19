@@ -1,10 +1,15 @@
 """业务用例编排、权限检查与审计。"""
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from .audit import AuditRecorder
-from .domain import Actor, PermissionDenied, text
+from .domain import Actor, PermissionDenied, ValidationError, integer, number, text
 from .repository import Repository
-from .rules import DomainRules
+from .rules import DEFAULT_REASON, DomainRules
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class Service:
@@ -52,6 +57,8 @@ class Service:
         record = self.repository.get(record_id)
         self.rules.require_transition(record, action)
         new_state, new_payload, summary = self.rules.apply_action(record, action, data or {})
+        if action == "evaluate" and new_state == record["state"]:
+            return record
         return self.repository.mutate(
             record_id=record_id,
             expected_version=int(expected_version),
@@ -60,6 +67,73 @@ class Service:
             actor_id=actor.user_id,
             action=action,
             details={"summary": summary, "input": data or {}, "from": record["state"], "to": new_state},
+        )
+
+    def payment_plan(self, actor: Actor, record_id: int) -> Dict[str, Any]:
+        actor = self._actor(actor)
+        self._ensure_known_role(actor)
+        record = self.repository.get(record_id)
+        if not record["payload"].get("schedule"):
+            raise ValidationError("方案尚未生效，暂无还款计划")
+        view = self.rules.schedule_view(record["payload"])
+        return {
+            "record_id": record["id"],
+            "reference": record["reference"],
+            "state": record["state"],
+            "version": record["version"],
+            "approved_payment": record["payload"].get("approved_payment"),
+            "approved_months": record["payload"].get("approved_months"),
+            "first_due_date": record["payload"].get("first_due_date"),
+            "plan_effective_date": record["payload"].get("plan_effective_date"),
+            **view,
+        }
+
+    def register_payment(self, actor: Actor, record_id: int, expected_version: int, data: Dict[str, Any]) -> Dict[str, Any]:
+        actor = self._actor(actor)
+        self._ensure_known_role(actor)
+        if not self.rules.role_can_action(actor.role, "payment"):
+            raise PermissionDenied("角色无权登记收款")
+        data = data or {}
+        installment_no = integer(data, "installment", 1)
+        amount = number(data, "amount", 0.01)
+        record = self.repository.get(record_id)
+        if record["state"] not in {"active", "defaulted"}:
+            raise ValidationError("仅生效中的还款方案可以登记收款")
+
+        payload = dict(record["payload"])
+        payload["schedule"] = [dict(item, payments=list(item.get("payments", []))) for item in (payload.get("schedule") or [])]
+        before = self.rules.schedule_view(payload)["summary"]
+        received_at = _now()
+        self.rules.apply_payment(payload, installment_no, amount, actor.user_id, received_at)
+
+        target_state, reason = self.rules.evaluate_state(record["state"], payload)
+        if target_state == "defaulted":
+            payload["default_reason"] = DEFAULT_REASON
+        elif target_state == "active" and record["state"] == "defaulted":
+            payload["recovered_at"] = received_at
+        elif target_state == "completed":
+            payload["completed_at"] = received_at
+
+        after = self.rules.schedule_view(payload)["summary"]
+        details = {
+            "summary": "第%s期登记实收%.2f元" % (installment_no, float(amount)),
+            "installment": installment_no,
+            "amount": round(float(amount), 2),
+            "received_at": received_at,
+            "from": record["state"],
+            "to": target_state,
+            "state_change_reason": reason,
+            "overdue_before": before["overdue_count"],
+            "overdue_after": after["overdue_count"],
+        }
+        return self.repository.mutate(
+            record_id=record_id,
+            expected_version=int(expected_version),
+            state=target_state,
+            payload=payload,
+            actor_id=actor.user_id,
+            action="payment",
+            details=details,
         )
 
     def timeline(self, actor: Actor, record_id: int) -> List[Dict[str, Any]]:

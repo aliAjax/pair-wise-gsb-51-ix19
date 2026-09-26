@@ -5,29 +5,239 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>住房贷款纾困申请与履约跟踪</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
-    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    :root { --line: #e2e6ea; --muted: #6b7682; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; margin: 0; color: #17212b; background: #f6f8fa; }
+    main { max-width: 1080px; margin: auto; padding: 2rem 1.25rem 4rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 .35rem; }
+    .sub { color: var(--muted); margin: 0 0 1.25rem; font-size: .92rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: 1.25rem; }
+    button { padding: .5rem .9rem; cursor: pointer; border: 1px solid #c4ccd4; border-radius: 7px; background: #fff; font-size: .9rem; }
+    button.primary { background: #1d6fe0; border-color: #1d6fe0; color: #fff; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .panel { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem 1.2rem; margin-bottom: 1.25rem; }
+    .panel h2 { font-size: 1.02rem; margin: 0 0 .8rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th, td { text-align: left; padding: .5rem .55rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 600; font-size: .8rem; }
+    tr.record { cursor: pointer; }
+    tr.record:hover { background: #f2f6fb; }
+    tr.record.active-row { background: #eef5ff; }
+    .badge { display: inline-block; padding: .12rem .55rem; border-radius: 999px; font-size: .76rem; font-weight: 600; }
+    .b-active { background: #e3f2e8; color: #1d7a3d; }
+    .b-defaulted { background: #fde7e7; color: #c0392b; }
+    .b-completed { background: #e8eaf6; color: #3949ab; }
+    .b-approved, .b-assessed, .b-submitted { background: #eef0f2; color: #5a6470; }
+    .b-cured { background: #e3f2e8; color: #1d7a3d; }
+    .s-paid { color: #1d7a3d; font-weight: 600; }
+    .s-overdue { color: #c0392b; font-weight: 700; }
+    .s-pending { color: #8a949e; }
+    .cards { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: 1rem; }
+    .card { flex: 1 1 130px; border: 1px solid var(--line); border-radius: 8px; padding: .65rem .8rem; }
+    .card .k { font-size: .76rem; color: var(--muted); }
+    .card .v { font-size: 1.15rem; font-weight: 700; margin-top: .15rem; }
+    .card.warn .v { color: #c0392b; }
+    .card.good .v { color: #1d7a3d; }
+    .inline { display: inline-flex; gap: .4rem; align-items: center; }
+    input[type=number], input[type=date], select { padding: .4rem .5rem; border: 1px solid #c4ccd4; border-radius: 6px; font-size: .85rem; width: 110px; }
+    .muted { color: var(--muted); font-size: .84rem; }
+    #msg { margin-bottom: .9rem; font-size: .88rem; min-height: 1.2em; }
+    .ok { color: #1d7a3d; }
+    .err { color: #c0392b; }
+    .meta { display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; font-size: .85rem; color: var(--muted); margin-bottom: .9rem; }
+    .meta b { color: #17212b; font-weight: 600; }
+    .actions-cell { display: flex; gap: .35rem; }
+    .actions-cell input { width: 95px; }
+    .actions-cell button { padding: .35rem .6rem; font-size: .82rem; }
   </style>
 </head>
 <body>
 <main>
   <h1>住房贷款纾困申请与履约跟踪</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <p class="sub">方案生效后生成按月还款计划；到期未清自动标为逾期，连续两期逾期进入违约，欠缴补齐后恢复。</p>
+
+  <div class="toolbar">
+    <button id="refresh" class="primary">刷新记录</button>
+    <button id="seed">生成演示数据</button>
+    <select id="stateFilter">
+      <option value="">全部状态</option>
+      <option value="submitted">已提交</option>
+      <option value="assessed">已评估</option>
+      <option value="approved">已批准</option>
+      <option value="active">履约中</option>
+      <option value="defaulted">已违约</option>
+      <option value="completed">已结清</option>
+    </select>
+  </div>
+  <div id="msg"></div>
+
+  <div class="panel">
+    <h2>纾困记录</h2>
+    <table>
+      <thead><tr><th>编号</th><th>状态</th><th>方案</th><th>批准月供</th><th>期数</th><th>操作</th></tr></thead>
+      <tbody id="records"><tr><td colspan="6" class="muted">点击“刷新记录”加载。</td></tr></tbody>
+    </table>
+  </div>
+
+  <div id="detail" hidden>
+    <div class="panel">
+      <h2 id="detailTitle">还款计划</h2>
+      <div id="recordMeta" class="meta"></div>
+      <div class="toolbar">
+        <button id="evaluate">重新评估履约状态</button>
+        <span class="muted">按当天日期重新计算逾期、违约与恢复</span>
+      </div>
+      <div id="cards" class="cards"></div>
+      <table>
+        <thead>
+          <tr><th>期次</th><th>到期日</th><th>应还(元)</th><th>实收(元)</th><th>欠缴(元)</th><th>状态</th><th>登记收款</th></tr>
+        </thead>
+        <tbody id="schedule"></tbody>
+      </table>
+    </div>
+  </div>
 </main>
+
 <script>
-const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
-  const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+const H = {"X-User-Id":"demo-servicer","X-Role":"servicer","X-Org":"demo","Content-Type":"application/json"};
+const ADMIN_H = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo","Content-Type":"application/json"};
+const STATE_LABEL = {submitted:"已提交", assessed:"已评估", approved:"已批准", active:"履约中", defaulted:"已违约", completed:"已结清", cured:"已恢复"};
+const STATUS_LABEL = {paid:"已结清", overdue:"逾期", pending:"未到期"};
+
+let currentId = null, currentVersion = null;
+
+const $ = id => document.getElementById(id);
+function msg(text, ok) { const el = $("msg"); el.textContent = text; el.className = ok ? "ok" : "err"; if (ok) setTimeout(() => { el.textContent = ""; }, 4000); }
+function fmt(n) { return Number(n).toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function today() { return new Date().toISOString().slice(0, 10); }
+async function api(path, opts = {}, headers = H) {
+  const res = await fetch(path, {...opts, headers});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || ("请求失败 " + res.status));
+  return data;
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+function badge(state) {
+  const cls = ["active","defaulted","completed","approved","assessed","submitted","cured"].includes(state) ? "b-" + state : "b-submitted";
+  return `<span class="badge ${cls}">${STATE_LABEL[state] || state}</span>`;
+}
+
+async function loadRecords() {
+  const state = $("stateFilter").value;
+  const items = (await api("/api/records?limit=50" + (state ? "&state=" + state : ""))).items;
+  const body = $("records");
+  if (!items.length) { body.innerHTML = `<tr><td colspan="6" class="muted">暂无记录，可点击“生成演示数据”。</td></tr>`; return; }
+  body.innerHTML = items.map(r => {
+    const p = r.payload;
+    const canView = p.schedule;
+    return `<tr class="record ${r.state === "active" ? "active-row" : ""}" data-id="${r.id}">
+      <td>${r.reference}</td><td>${badge(r.state)}</td>
+      <td>${p.approved_program ? ({deferral:"延期", reduction:"减供", restructure:"重组"})[p.approved_program] : (p.program_type || "-")}</td>
+      <td>${p.approved_payment != null ? fmt(p.approved_payment) : "-"}</td>
+      <td>${p.approved_months || "-"}</td>
+      <td>${canView ? `<button data-plan="${r.id}">查看计划</button>` : `<span class="muted">${STATE_LABEL[r.state]}，未生效</span>`}</td>
+    </tr>`;
+  }).join("");
+  body.querySelectorAll("[data-plan]").forEach(btn => btn.onclick = e => { e.stopPropagation(); loadPlan(Number(btn.dataset.plan)); });
+  body.querySelectorAll("tr.record").forEach(tr => tr.onclick = () => {
+    const id = Number(tr.dataset.id);
+    if (tr.querySelector("[data-plan]")) loadPlan(id);
+  });
+}
+
+async function loadPlan(id) {
+  try {
+    const plan = await api(`/api/records/${id}/plan`);
+    currentId = id; currentVersion = plan.version;
+    $("detail").hidden = false;
+    $("detailTitle").textContent = `还款计划 · ${plan.reference}`;
+    const s = plan.summary;
+    $("recordMeta").innerHTML = `
+      <span>贷款状态：${badge(plan.state)}</span>
+      <span>批准月供：<b>${fmt(plan.approved_payment)} 元</b></span>
+      <span>总期数：<b>${plan.approved_months} 期</b></span>
+      <span>首期到期：<b>${plan.first_due_date}</b></span>
+      <span>生效日：<b>${plan.plan_effective_date || "-"}</b></span>
+      <span>数据版本：<b>${plan.version}</b></span>`;
+    $("cards").innerHTML = `
+      <div class="card"><div class="k">计划总额</div><div class="v">${fmt(s.total_due)}</div></div>
+      <div class="card good"><div class="k">累计实收</div><div class="v">${fmt(s.total_paid)}</div></div>
+      <div class="card ${s.outstanding > 0 ? "warn" : ""}"><div class="k">当前欠缴</div><div class="v">${fmt(s.outstanding)}</div></div>
+      <div class="card ${s.overdue_amount > 0 ? "warn" : "good"}"><div class="k">逾期金额</div><div class="v">${fmt(s.overdue_amount)}</div></div>
+      <div class="card ${s.overdue_count > 0 ? "warn" : ""}"><div class="k">逾期期数</div><div class="v">${s.overdue_count}</div></div>
+      <div class="card ${s.consecutive_overdue >= 2 ? "warn" : ""}"><div class="k">连续逾期</div><div class="v">${s.consecutive_overdue}</div></div>`;
+    $("schedule").innerHTML = plan.installments.map(row => `
+      <tr>
+        <td>第 ${row.installment} 期</td>
+        <td>${row.due_date}</td>
+        <td>${fmt(row.due_amount)}</td>
+        <td>${fmt(row.paid_amount)}</td>
+        <td>${row.outstanding > 0 ? fmt(row.outstanding) : "—"}</td>
+        <td class="s-${row.status}">${STATUS_LABEL[row.status]}</td>
+        <td><div class="actions-cell">
+          <input type="number" id="amt-${row.installment}" min="0.01" step="0.01" placeholder="实收金额" value="${row.outstanding > 0 ? row.outstanding : ""}">
+          <button data-pay="${row.installment}" ${plan.state === "completed" ? "disabled" : ""}>登记收款</button>
+        </div></td>
+      </tr>`).join("");
+    $("schedule").querySelectorAll("[data-pay]").forEach(btn => btn.onclick = () => pay(Number(btn.dataset.pay)));
+  } catch (e) { msg(e.message, false); }
+}
+
+async function pay(installment) {
+  const amount = Number($("amt-" + installment).value);
+  if (!amount || amount <= 0) return msg("请输入大于0的实收金额", false);
+  try {
+    const rec = await api(`/api/records/${currentId}/payments`, {
+      method: "POST",
+      body: JSON.stringify({expected_version: currentVersion, data: {installment, amount}})
+    });
+    currentVersion = rec.version;
+    msg(`第${installment}期已登记实收 ${fmt(amount)} 元，当前状态：${STATE_LABEL[rec.state] || rec.state}`, true);
+    await loadRecords();
+    await loadPlan(currentId);
+  } catch (e) { msg(e.message, false); }
+}
+
+$("refresh").onclick = async () => { try { await loadRecords(); msg("记录已刷新", true); } catch (e) { msg(e.message, false); } };
+$("stateFilter").onchange = loadRecords;
+$("evaluate").onclick = async () => {
+  try {
+    const rec = await api(`/api/records/${currentId}/actions/evaluate`, {
+      method: "POST",
+      body: JSON.stringify({expected_version: currentVersion, data: {}})
+    });
+    currentVersion = rec.version;
+    msg(`履约状态：${STATE_LABEL[rec.state] || rec.state}`, true);
+    await loadRecords();
+    await loadPlan(currentId);
+  } catch (e) { msg(e.message, false); }
+};
+
+// ---- 演示数据：跑通 申请→评估→批准→生效，并构造连续两期逾期 ----
+$("seed").onclick = async () => {
+  try {
+    const ref = "MORT-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-" + Math.floor(Math.random() * 900 + 100);
+    const payload = {
+      reference: ref,
+      data: {
+        borrower_id: "B-" + Date.now(),
+        monthly_income: 18000, monthly_expenses: 9000, monthly_payment: 7000,
+        arrears: 12000, hardship_factor: 0.5, program_type: "reduction", requested_months: 6
+      }
+    };
+    let rec = await api("/api/records", {method: "POST", body: JSON.stringify(payload)});
+    // assess / approve 需要不同角色，用 admin 统一演示
+    rec = await api(`/api/records/${rec.id}/actions/assess`, {method: "POST", body: JSON.stringify({expected_version: rec.version, data: {assessment_note: "收入波动，符合纾困条件"}})}, ADMIN_H);
+    rec = await api(`/api/records/${rec.id}/actions/approve`, {method: "POST", body: JSON.stringify({expected_version: rec.version, data: {exception_approved: false}})}, ADMIN_H);
+    // 首期到期日设在两个月前的20号，使前两期已到期未清（连续两期逾期）
+    const fd = new Date(); fd.setMonth(fd.getMonth() - 2); fd.setDate(20);
+    rec = await api(`/api/records/${rec.id}/actions/activate`, {method: "POST", body: JSON.stringify({expected_version: rec.version, data: {borrower_ack: true, first_due_date: fd.toISOString().slice(0,10)}})}, ADMIN_H);
+    await loadRecords();
+    await loadPlan(rec.id);
+    msg(`演示记录 ${ref} 已生效：前两期已逾期，可点“重新评估履约状态”触发违约，或直接登记收款。`, true);
+  } catch (e) { msg(e.message, false); }
+};
+
+loadRecords().catch(e => msg(e.message, false));
 </script>
 </body>
 </html>

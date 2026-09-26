@@ -6,12 +6,12 @@
 
 - `app.py`：命令行参数、依赖组装和服务启动。
 - `src/domain.py`：领域数据类型、错误和基础校验。
-- `src/rules.py`：状态转换、偿付能力、方案阈值和履约状态和冲突检查。
+- `src/rules.py`：状态转换、偿付能力、方案阈值、按月还款计划、逾期/违约/恢复规则和冲突检查。
 - `src/repository.py`：SQLite建表、事务和查询。
-- `src/service.py`：用例编排、权限检查、乐观并发和审计。
+- `src/service.py`：用例编排、权限检查、乐观并发、收款登记和审计。
 - `src/http_api.py`：HTTP路由与统一错误响应。
 - `src/audit.py`：事件时间线。
-- `static/index.html`：最小演示页面。
+- `static/index.html`：演示页面（计划、欠缴、每期状态、页面登记收款）。
 - `tests/`：完整流程、规则计算和失败场景测试。
 
 ## 启动
@@ -28,12 +28,26 @@ python3 app.py --db ./data.db --port 8327
 - `GET /`：演示页面。
 - `GET /api/records`：记录列表，可带`state`和`limit`参数。
 - `GET /api/records/{id}`：记录详情。
+- `GET /api/records/{id}/plan`：按月还款计划（期次、到期日、应还/实收/欠缴、每期状态与汇总结论）。
 - `GET /api/records/{id}/audit`：审计时间线。
 - `GET /api/stats`：状态统计。
 - `POST /api/records`：创建记录，请求体为`{"reference":"...","data":{...}}`。
 - `POST /api/records/{id}/actions/{action}`：执行业务动作，请求体为`{"expected_version":1,"data":{...}}`。
+  - `assess`/`approve`：评估与批准，批准后记录批准月供、月数。
+  - `activate`：方案生效，生成按月还款计划；`data`可选`first_due_date`（YYYY-MM-DD，默认生效日次月同日），需`borrower_ack:true`。
+  - `evaluate`：按当天日期重新评估履约（逾期状态实时计算，此动作负责把贷款级状态落库）。
+  - `cure`（defaulted→active）：欠缴已补齐时手动恢复。
+  - `default`（active→defaulted）：连续两期逾期后可手动标记违约。
+- `POST /api/records/{id}/payments`：登记某期实收，请求体为`{"expected_version":1,"data":{"installment":1,"amount":3400.0}}`；支持部分收款，登记后自动重算逾期、违约（连续两期逾期）、恢复（欠缴补齐）与结清（全部付清）。
 
-除`/health`和`/`外，请求需提供`X-User-Id`、`X-Role`，可选`X-Org`。
+## 履约规则
+
+- 生效时按**批准月供**生成 `approved_months` 期计划：期次、应还额、到期日（按月顺延，月末自动钳制）。
+- 每期状态实时派生：`paid`（实收≥应还）、`overdue`（到期日已过且未清）、`pending`（未到期）。
+- 计划汇总：累计实收、当前欠缴、逾期金额、逾期期数、最大连续逾期期数。
+- 连续两期（按期次相邻）逾期 → 贷款 `active → defaulted`；逾期欠缴全部补齐 → 恢复 `active`；所有期次结清 → `completed`。
+
+除`/health`和`/`外，请求需提供`X-User-Id`、`X-Role`，可选`X-Org`。收款登记限`servicer`（或`admin`）。
 
 ## 测试
 
@@ -41,4 +55,4 @@ python3 app.py --db ./data.db --port 8327
 python3 -m unittest discover -s tests -v
 ```
 
-测试覆盖完整流程、规则计算、重复引用、权限拒绝和版本冲突。
+测试覆盖完整流程（计划生成、逾期、违约、补齐恢复、结清）、规则计算、重复引用、权限拒绝和版本冲突。
