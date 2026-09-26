@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Any, Dict
 from urllib.parse import parse_qs, urlparse
 
-from .domain import Actor, DomainError, PermissionDenied, ValidationError
+from .domain import Actor, DomainError, PermissionDenied, ValidationError, parse_date
 
 
 RECORD_RE = re.compile(r"^/api/records/(\d+)$")
 ACTION_RE = re.compile(r"^/api/records/(\d+)/actions/([a-z_]+)$")
 AUDIT_RE = re.compile(r"^/api/records/(\d+)/audit$")
+PAYMENT_RE = re.compile(r"^/api/records/(\d+)/payments$")
+ROLL_RE = re.compile(r"^/api/records/(\d+)/roll$")
 
 
 def make_handler(service: Any, static_dir: Path):
@@ -78,7 +80,10 @@ def make_handler(service: Any, static_dir: Path):
                     return
                 match = RECORD_RE.match(parsed.path)
                 if match:
-                    self._send(200, service.get_record(self._actor(), int(match.group(1))))
+                    query = parse_qs(parsed.query)
+                    as_of_raw = query.get("as_of", [None])[0]
+                    as_of = parse_date(as_of_raw, "as_of") if as_of_raw else None
+                    self._send(200, service.record_view(self._actor(), int(match.group(1)), as_of))
                     return
                 match = AUDIT_RE.match(parsed.path)
                 if match:
@@ -105,6 +110,24 @@ def make_handler(service: Any, static_dir: Path):
                     if not isinstance(version, int):
                         raise ValidationError("expected_version必须是整数")
                     record = service.act(self._actor(), int(match.group(1)), version, match.group(2), body.get("data", {}))
+                    self._send(200, record)
+                    return
+                match = PAYMENT_RE.match(parsed.path)
+                if match:
+                    version = body.get("expected_version")
+                    if not isinstance(version, int):
+                        raise ValidationError("expected_version必须是整数")
+                    record = service.register_payment(self._actor(), int(match.group(1)), version, body.get("data", {}))
+                    self._send(200, record)
+                    return
+                match = ROLL_RE.match(parsed.path)
+                if match:
+                    version = body.get("expected_version")
+                    if not isinstance(version, int):
+                        raise ValidationError("expected_version必须是整数")
+                    as_of_raw = body.get("as_of")
+                    as_of = parse_date(as_of_raw, "as_of") if isinstance(as_of_raw, str) and as_of_raw.strip() else None
+                    record = service.roll_status(self._actor(), int(match.group(1)), version, as_of)
                     self._send(200, record)
                     return
                 self._send(404, {"error": "not_found", "message": "路径不存在"})

@@ -1,5 +1,6 @@
 """领域基础类型与输入校验。"""
 from dataclasses import dataclass
+from datetime import date, datetime
 from typing import Any, Dict, List
 
 
@@ -95,3 +96,21 @@ def text_list(data: Dict[str, Any], key: str, minimum: int = 0) -> List[str]:
     if len(value) < minimum:
         raise ValidationError("%s至少需要%s项" % (key, minimum))
     return [item.strip() for item in value]
+
+
+def parse_date(value: str, key: str) -> date:
+    try:
+        return datetime.strptime(value.strip(), "%Y-%m-%d").date()
+    except (AttributeError, ValueError) as exc:
+        raise ValidationError("%s必须是YYYY-MM-DD格式的日期" % key) from exc
+
+
+def date_field(data: Dict[str, Any], key: str, default: date = None) -> date:
+    value = data.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if default is None:
+            raise ValidationError("%s不能为空" % key)
+        return default
+    if not isinstance(value, str):
+        raise ValidationError("%s必须是YYYY-MM-DD格式的日期" % key)
+    return parse_date(value, key)

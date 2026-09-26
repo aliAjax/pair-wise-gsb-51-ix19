@@ -3,31 +3,336 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>住房贷款纾困申请与履约跟踪</title>
+  <title>住房贷款纾困 · 还款计划与履约跟踪</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; color: #17212b; }
-    main { max-width: 960px; margin: auto; }
-    button { padding: .55rem .9rem; cursor: pointer; }
-    pre { background: #f4f6f8; padding: 1rem; overflow: auto; border-radius: 8px; }
-    .row { display: flex; gap: 1rem; align-items: center; }
+    :root { --line:#e2e8f0; --muted:#64748b; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; --info:#1d4ed8; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background:#f6f8fa; color:#17212b; }
+    main { max-width: 1080px; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+    h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+    h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
+    .sub { color: var(--muted); font-size: .85rem; margin-bottom: 1.25rem; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1rem; }
+    .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+    .grow { flex:1; }
+    button { padding:.5rem .9rem; cursor:pointer; border:1px solid #cbd5e1; background:#fff; border-radius:7px; font-size:.88rem; }
+    button.primary { background:#1d4ed8; border-color:#1d4ed8; color:#fff; }
+    button.danger { background:#b91c1c; border-color:#b91c1c; color:#fff; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    select, input { padding:.45rem .55rem; border:1px solid #cbd5e1; border-radius:7px; font-size:.88rem; }
+    label { font-size:.85rem; color:var(--muted); display:flex; flex-direction:column; gap:.25rem; }
+    table { width:100%; border-collapse:collapse; font-size:.88rem; }
+    th, td { padding:.5rem .6rem; border-bottom:1px solid var(--line); text-align:right; }
+    th:first-child, td:first-child { text-align:center; }
+    th:nth-child(3), td:nth-child(3) { text-align:left; }
+    th { color:var(--muted); font-weight:600; background:#f8fafc; }
+    .badge { display:inline-block; padding:.15rem .55rem; border-radius:999px; font-size:.78rem; font-weight:600; }
+    .b-pending { background:#e2e8f0; color:#475569; }
+    .b-paid { background:#dcfce7; color:var(--ok); }
+    .b-partial { background:#fef3c7; color:var(--warn); }
+    .b-overdue { background:#fee2e2; color:var(--bad); }
+    .b-state { background:#e0e7ff; color:#3730a3; }
+    .b-defaulted { background:#fee2e2; color:var(--bad); }
+    .b-active { background:#dcfce7; color:var(--ok); }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:.6rem; margin-bottom:1rem; }
+    .stat { background:#fff; border:1px solid var(--line); border-radius:10px; padding:.7rem .9rem; }
+    .stat .k { font-size:.78rem; color:var(--muted); }
+    .stat .v { font-size:1.15rem; font-weight:700; margin-top:.15rem; }
+    .stat .v.bad { color:var(--bad); }
+    .stat .v.ok { color:var(--ok); }
+    .msg { min-height:1.4rem; font-size:.88rem; margin:.25rem 0 .75rem; }
+    .msg.error { color:var(--bad); }
+    .msg.ok { color:var(--ok); }
+    .timeline { font-size:.82rem; color:var(--muted); max-height:180px; overflow:auto; margin:0; padding-left:1.1rem; }
+    .timeline li { margin-bottom:.3rem; }
+    .timeline code { color:#17212b; }
+    .hidden { display:none; }
+    .hint { font-size:.8rem; color:var(--muted); }
   </style>
 </head>
 <body>
 <main>
-  <h1>住房贷款纾困申请与履约跟踪</h1>
-  <p>最小演示页。完整业务流程通过README中的JSON接口调用。</p>
-  <div class="row"><button id="load">加载记录</button><button id="stats">查看状态统计</button></div>
-  <pre id="output">点击上方按钮读取服务状态。</pre>
+  <h1>住房贷款纾困 · 还款计划与履约跟踪</h1>
+  <p class="sub">方案生效后生成按月还款计划；到期未清标记逾期，连续两期逾期进入违约，欠缴补齐后恢复。</p>
+
+  <div class="card">
+    <h2>演示准备</h2>
+    <div class="row">
+      <button id="demo" class="primary">一键演示：创建 → 评估 → 批准 → 生效</button>
+      <span class="hint">生成一笔 9 期、月供 3,400 元的纾困方案（激活日 2026-01-15，首期 2026-02-15 到期）</span>
+    </div>
+    <div class="row" style="margin-top:.8rem">
+      <label>记录
+        <select id="recordSelect" style="min-width:260px"></select>
+      </label>
+      <button id="refresh">刷新列表</button>
+      <label>模拟日期（履约核对基准日）
+        <input type="date" id="asOf">
+      </label>
+      <button id="applyAsOf">按此日期核对</button>
+    </div>
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <div id="detail" class="hidden">
+    <div class="stats">
+      <div class="stat"><div class="k">贷款状态</div><div class="v" id="stState">-</div></div>
+      <div class="stat"><div class="k">批准月供 / 期数</div><div class="v" id="stTerms">-</div></div>
+      <div class="stat"><div class="k">当前欠缴（到期未清）</div><div class="v bad" id="stOverdue">-</div></div>
+      <div class="stat"><div class="k">计划剩余未还</div><div class="v" id="stOutstanding">-</div></div>
+      <div class="stat"><div class="k">连续逾期期数</div><div class="v bad" id="stConsec">-</div></div>
+      <div class="stat"><div class="k">已缴清期数</div><div class="v ok" id="stPaid">-</div></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>按月还款计划 <span id="planAsOf" class="hint"></span></h2>
+        <div class="row">
+          <button id="roll" class="danger">核对履约状态（逾期/违约/恢复）</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>期次</th><th>应还额</th><th>到期日</th><th>实收</th><th>收款日</th><th>待还</th><th>状态</th></tr>
+        </thead>
+        <tbody id="planBody"></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>登记收款</h2>
+      <div class="row">
+        <label>期次
+          <select id="paySeq" style="min-width:220px"></select>
+        </label>
+        <label>实收金额
+          <input type="number" id="payAmount" min="0.01" step="0.01" placeholder="0.00" style="width:130px">
+        </label>
+        <label>收款日期
+          <input type="date" id="payDate">
+        </label>
+        <button id="payBtn" class="primary">登记</button>
+        <span class="hint">支持部分实收；违约贷款欠缴补齐后自动恢复正常。</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>审计时间线</h2>
+      <ul id="timeline" class="timeline"></ul>
+    </div>
+  </div>
 </main>
+
 <script>
-const headers = {"X-User-Id":"demo-admin","X-Role":"admin","X-Org":"demo"};
-async function show(path) {
-  const response = await fetch(path, {headers});
-  const data = await response.json();
-  document.getElementById("output").textContent = JSON.stringify(data, null, 2);
+const HEADERS = {"X-User-Id": "demo-servicer", "X-Role": "servicer", "X-Org": "demo"};
+const ADMIN_HEADERS = {"X-User-Id": "demo-admin", "X-Role": "admin", "X-Org": "demo"};
+const STATUS_LABEL = {pending: "未到期", paid: "已缴清", partial: "部分实收", overdue: "逾期"};
+const STATE_LABEL = {submitted: "已提交", assessed: "已评估", approved: "已批准", active: "履约中", cured: "已结清恢复", defaulted: "违约"};
+let current = null;   // 当前记录视图（含 plan_status）
+let records = [];
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString("zh-CN", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+function say(text, ok) {
+  const el = $("msg");
+  el.textContent = text || "";
+  el.className = "msg " + (ok ? "ok" : "error");
 }
-document.getElementById("load").onclick = () => show("/api/records?limit=20");
-document.getElementById("stats").onclick = () => show("/api/stats");
+
+async function api(path, options = {}) {
+  const response = await fetch(path, Object.assign({headers: HEADERS}, options));
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || ("请求失败 " + response.status));
+  }
+  return data;
+}
+
+function asOfQuery() {
+  const v = $("asOf").value;
+  return v ? "?as_of=" + v : "";
+}
+
+async function refreshList(selectId) {
+  const data = await api("/api/records?limit=100");
+  records = data.items || [];
+  const sel = $("recordSelect");
+  sel.innerHTML = "";
+  if (!records.length) {
+    sel.innerHTML = "<option value=''>（暂无记录，点击上方一键演示）</option>";
+    return;
+  }
+  for (const r of records) {
+    const opt = document.createElement("option");
+    opt.value = r.id;
+    opt.textContent = "#" + r.id + " " + r.reference + " · " + (STATE_LABEL[r.state] || r.state);
+    sel.appendChild(opt);
+  }
+  sel.value = String(selectId || records[0].id);
+  await loadDetail();
+}
+
+async function loadDetail() {
+  const id = $("recordSelect").value;
+  if (!id) { $("detail").classList.add("hidden"); return; }
+  current = await api("/api/records/" + id + asOfQuery());
+  render();
+  await loadTimeline();
+}
+
+function render() {
+  const r = current;
+  $("detail").classList.remove("hidden");
+  const ps = r.plan_status;
+  const stateBadge = r.state === "defaulted" ? "b-defaulted" : (r.state === "active" ? "b-active" : "b-state");
+  $("stState").innerHTML = "<span class='badge " + stateBadge + "'>" + (STATE_LABEL[r.state] || r.state) + "</span>";
+  const p = r.payload || {};
+  $("stTerms").textContent = p.approved_payment != null ? (fmt(p.approved_payment) + " 元 × " + p.approved_months + " 期") : "—";
+  if (!ps) {
+    $("stOverdue").textContent = "—";
+    $("stOutstanding").textContent = "—";
+    $("stConsec").textContent = "—";
+    $("stPaid").textContent = "—";
+    $("planAsOf").textContent = "（方案生效后生成还款计划）";
+    $("planBody").innerHTML = "<tr><td colspan='7' style='text-align:center;color:#64748b'>当前状态为「" + (STATE_LABEL[r.state] || r.state) + "」，尚无还款计划。</td></tr>";
+    $("paySeq").innerHTML = "";
+    $("payBtn").disabled = true;
+    $("roll").disabled = true;
+    return;
+  }
+  $("stOverdue").textContent = fmt(ps.overdue_amount) + " 元";
+  $("stOutstanding").textContent = fmt(ps.outstanding) + " 元";
+  $("stConsec").textContent = ps.consecutive_overdue + " 期";
+  $("stPaid").textContent = ps.paid_count + " / " + ps.total_count;
+  $("planAsOf").textContent = "（核对基准日 " + ps.as_of + "）";
+
+  const body = $("planBody");
+  body.innerHTML = "";
+  for (const it of ps.installments) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      "<td>第 " + it.sequence + " 期</td>" +
+      "<td>" + fmt(it.due_amount) + "</td>" +
+      "<td>" + it.due_date + "</td>" +
+      "<td>" + fmt(it.paid_amount) + "</td>" +
+      "<td>" + (it.paid_on || "—") + "</td>" +
+      "<td>" + fmt(it.outstanding) + "</td>" +
+      "<td><span class='badge b-" + it.status + "'>" + STATUS_LABEL[it.status] + "</span></td>";
+    body.appendChild(tr);
+  }
+
+  const sel = $("paySeq");
+  sel.innerHTML = "";
+  for (const it of ps.installments) {
+    if (it.status === "paid") continue;
+    const opt = document.createElement("option");
+    opt.value = it.sequence;
+    opt.textContent = "第 " + it.sequence + " 期 · 待还 " + fmt(it.outstanding) + " 元（" + it.due_date + " 到期）";
+    opt.dataset.outstanding = it.outstanding;
+    sel.appendChild(opt);
+  }
+  const canPay = (r.state === "active" || r.state === "defaulted") && sel.options.length > 0;
+  $("payBtn").disabled = !canPay;
+  if (canPay) prefillAmount();
+  $("roll").disabled = !(r.state === "active" || r.state === "defaulted");
+}
+
+function prefillAmount() {
+  const sel = $("paySeq");
+  const opt = sel.options[sel.selectedIndex];
+  if (opt) $("payAmount").value = Number(opt.dataset.outstanding).toFixed(2);
+}
+
+async function loadTimeline() {
+  const data = await api("/api/records/" + current.id + "/audit");
+  const ul = $("timeline");
+  ul.innerHTML = "";
+  for (const ev of (data.items || []).slice().reverse()) {
+    const li = document.createElement("li");
+    const d = ev.details || {};
+    li.innerHTML = "<code>" + ev.action + "</code> " + (d.summary || d.reason || "") +
+      " <span>· " + ev.actor_id + " · " + (ev.created_at || "").replace("T", " ").slice(0, 19) + "</span>";
+    ul.appendChild(li);
+  }
+}
+
+async function run(action) {
+  try {
+    await action();
+  } catch (err) {
+    say(err.message, false);
+  }
+}
+
+$("refresh").onclick = () => run(async () => { await refreshList($("recordSelect").value); say("列表已刷新", true); });
+$("recordSelect").onchange = () => run(loadDetail);
+$("applyAsOf").onclick = () => run(async () => { await loadDetail(); say("已按 " + ($("asOf").value || "今天") + " 核对每期状态", true); });
+$("paySeq").onchange = prefillAmount;
+
+$("demo").onclick = () => run(async () => {
+  const ref = "MORT-" + Date.now().toString().slice(-6);
+  const create = await fetch("/api/records", {
+    method: "POST",
+    headers: Object.assign({"Content-Type": "application/json"}, ADMIN_HEADERS),
+    body: JSON.stringify({reference: ref, data: {
+      monthly_income: 18000, monthly_expenses: 9000, monthly_payment: 7000,
+      arrears: 12000, hardship_factor: 0.5, program_type: "reduction", requested_months: 9
+    }})
+  }).then(r => r.json());
+  if (create.error) throw new Error(create.message);
+  let rec = create;
+  const steps = [
+    ["assess", "intake_officer", {assessment_note: "收入波动，符合纾困条件"}],
+    ["approve", "underwriter", {exception_approved: false}],
+    ["activate", "servicer", {borrower_ack: true, activation_date: "2026-01-15"}],
+  ];
+  for (const [action, role, data] of steps) {
+    const resp = await fetch("/api/records/" + rec.id + "/actions/" + action, {
+      method: "POST",
+      headers: Object.assign({"Content-Type": "application/json"}, {"X-User-Id": "demo-" + role, "X-Role": role, "X-Org": "demo"}),
+      body: JSON.stringify({expected_version: rec.version, data})
+    }).then(r => r.json());
+    if (resp.error) throw new Error(resp.message);
+    rec = resp;
+  }
+  if (!$("asOf").value) $("asOf").value = "2026-01-16";
+  await refreshList(rec.id);
+  say("演示方案已生效：" + ref + "，共 " + rec.payload.approved_months + " 期。把模拟日期调到 2026-04-16 后点「核对履约状态」可看到违约。", true);
+});
+
+$("payBtn").onclick = () => run(async () => {
+  const seq = Number($("paySeq").value);
+  const amount = Number($("payAmount").value);
+  if (!seq || !(amount > 0)) { say("请选择期次并填写实收金额", false); return; }
+  const data = {sequence: seq, amount};
+  if ($("payDate").value) data.paid_on = $("payDate").value;
+  await api("/api/records/" + current.id + "/payments", {
+    method: "POST",
+    headers: Object.assign({"Content-Type": "application/json"}, HEADERS),
+    body: JSON.stringify({expected_version: current.version, data})
+  });
+  await loadDetail();
+  say("第 " + seq + " 期收款 " + fmt(amount) + " 元已登记", true);
+});
+
+$("roll").onclick = () => run(async () => {
+  const before = current.state;
+  const body = {expected_version: current.version};
+  if ($("asOf").value) body.as_of = $("asOf").value;
+  const rec = await api("/api/records/" + current.id + "/roll", {
+    method: "POST",
+    headers: Object.assign({"Content-Type": "application/json"}, HEADERS),
+    body: JSON.stringify(body)
+  });
+  await loadDetail();
+  say(rec.state === before ? "履约状态无变化" : "贷款状态已更新为「" + (STATE_LABEL[rec.state] || rec.state) + "」", true);
+});
+
+// 默认模拟日期：今天
+$("asOf").value = new Date().toISOString().slice(0, 10);
+$("payDate").value = new Date().toISOString().slice(0, 10);
+run(async () => refreshList());
 </script>
 </body>
 </html>
